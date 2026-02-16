@@ -9,6 +9,7 @@
 use std::env;
 use std::io::prelude::*;
 use std::io::stdout;
+
 use sysfs_gpio::{Direction, Edge, Pin};
 
 fn interrupt(pin: u64) -> sysfs_gpio::Result<()> {

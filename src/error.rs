@@ -1,6 +1,4 @@
-use std::convert;
-use std::fmt;
-use std::io;
+use std::{convert, fmt, io};
 
 #[derive(Debug)]
 pub enum Error {

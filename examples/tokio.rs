@@ -1,8 +1,9 @@
 // Copyright (c) 2020.  The sysfs-gpio Authors.
 
+use std::env;
+
 use futures::future::join_all;
 use futures::StreamExt;
-use std::env;
 use sysfs_gpio::{Direction, Edge, Pin};
 
 async fn monitor_pin(pin: Pin) -> Result<(), sysfs_gpio::Error> {

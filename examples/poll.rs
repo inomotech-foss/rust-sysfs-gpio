@@ -9,6 +9,7 @@
 use std::env;
 use std::thread::sleep;
 use std::time::Duration;
+
 use sysfs_gpio::{Direction, Pin};
 
 fn poll(pin_num: u64) -> sysfs_gpio::Result<()> {

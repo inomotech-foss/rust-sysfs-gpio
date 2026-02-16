@@ -22,20 +22,23 @@
 //! the following:
 //!
 //! ```no_run
-//! use sysfs_gpio::{Direction, Pin};
 //! use std::thread::sleep;
 //! use std::time::Duration;
 //!
+//! use sysfs_gpio::{Direction, Pin};
+//!
 //! let my_led = Pin::new(127); // number depends on chip, etc.
-//! my_led.with_exported(|| {
-//!     my_led.set_direction(Direction::Out).unwrap();
-//!     loop {
-//!         my_led.set_value(0).unwrap();
-//!         sleep(Duration::from_millis(200));
-//!         my_led.set_value(1).unwrap();
-//!         sleep(Duration::from_millis(200));
-//!     }
-//! }).unwrap();
+//! my_led
+//!     .with_exported(|| {
+//!         my_led.set_direction(Direction::Out).unwrap();
+//!         loop {
+//!             my_led.set_value(0).unwrap();
+//!             sleep(Duration::from_millis(200));
+//!             my_led.set_value(1).unwrap();
+//!             sleep(Duration::from_millis(200));
+//!         }
+//!     })
+//!     .unwrap();
 //! ```
 
 #![cfg_attr(feature = "async-tokio", allow(deprecated))]
@@ -49,15 +52,18 @@ extern crate nix;
 #[cfg(feature = "async-tokio")]
 extern crate tokio;
 
-use std::io;
+use std::fs::File;
 use std::io::prelude::*;
 #[cfg(any(target_os = "linux", target_os = "android", feature = "async-tokio"))]
 use std::io::SeekFrom;
 #[cfg(not(target_os = "wasi"))]
 use std::os::unix::prelude::*;
 use std::path::Path;
-use std::{fs, fs::File};
+#[cfg(feature = "async-tokio")]
+use std::task::Poll;
+use std::{fs, io};
 
+pub use error::Error;
 #[cfg(feature = "async-tokio")]
 use futures::{ready, Stream};
 #[cfg(feature = "mio-evented")]
@@ -69,11 +75,7 @@ use nix::sys::epoll::*;
 #[cfg(not(target_os = "wasi"))]
 use nix::unistd::close;
 #[cfg(feature = "async-tokio")]
-use std::task::Poll;
-#[cfg(feature = "async-tokio")]
 use tokio::io::unix::AsyncFd;
-
-pub use error::Error;
 
 mod error;
 
@@ -214,7 +216,7 @@ impl Pin {
     /// # Example
     ///
     /// ```no_run
-    /// use sysfs_gpio::{Pin, Direction};
+    /// use sysfs_gpio::{Direction, Pin};
     ///
     /// let gpio = Pin::new(24);
     /// let res = gpio.with_exported(|| {
@@ -260,8 +262,8 @@ impl Pin {
     /// error are the following:
     /// 1. The system does not support the GPIO sysfs interface
     /// 2. The requested GPIO is out of range and cannot be exported
-    /// 3. The requested GPIO is in use by the kernel and cannot
-    ///    be exported by use in userspace
+    /// 3. The requested GPIO is in use by the kernel and cannot be exported by
+    ///    use in userspace
     ///
     /// # Example
     /// ```no_run
@@ -331,15 +333,12 @@ impl Pin {
     /// not support changing the direction of a pin in userspace.  If
     /// this is the case, you will get an error.
     pub fn set_direction(&self, dir: Direction) -> Result<()> {
-        self.write_to_device_file(
-            "direction",
-            match dir {
-                Direction::In => "in",
-                Direction::Out => "out",
-                Direction::High => "high",
-                Direction::Low => "low",
-            },
-        )?;
+        self.write_to_device_file("direction", match dir {
+            Direction::In => "in",
+            Direction::Out => "out",
+            Direction::High => "high",
+            Direction::Low => "low",
+        })?;
 
         Ok(())
     }
@@ -367,13 +366,10 @@ impl Pin {
     /// A 0 value will set the pin low and any other value will
     /// set the pin high (1 is typical).
     pub fn set_value(&self, value: u8) -> Result<()> {
-        self.write_to_device_file(
-            "value",
-            match value {
-                0 => "0",
-                _ => "1",
-            },
-        )?;
+        self.write_to_device_file("value", match value {
+            0 => "0",
+            _ => "1",
+        })?;
 
         Ok(())
     }
@@ -404,15 +400,12 @@ impl Pin {
     /// result in `poll()` returning.  This call will return an Error
     /// if the pin does not allow interrupts.
     pub fn set_edge(&self, edge: Edge) -> Result<()> {
-        self.write_to_device_file(
-            "edge",
-            match edge {
-                Edge::NoInterrupt => "none",
-                Edge::RisingEdge => "rising",
-                Edge::FallingEdge => "falling",
-                Edge::BothEdges => "both",
-            },
-        )?;
+        self.write_to_device_file("edge", match edge {
+            Edge::NoInterrupt => "none",
+            Edge::RisingEdge => "rising",
+            Edge::FallingEdge => "falling",
+            Edge::BothEdges => "both",
+        })?;
 
         Ok(())
     }
@@ -437,13 +430,10 @@ impl Pin {
     /// This will affect "rising" and "falling" edge triggered
     /// configuration.
     pub fn set_active_low(&self, active_low: bool) -> Result<()> {
-        self.write_to_device_file(
-            "active_low",
-            match active_low {
-                true => "1",
-                false => "0",
-            },
-        )?;
+        self.write_to_device_file("active_low", match active_low {
+            true => "1",
+            false => "0",
+        })?;
 
         Ok(())
     }
@@ -460,10 +450,11 @@ impl Pin {
 
     /// Get an AsyncPinPoller object for this pin
     ///
-    /// The async pin poller object can be used with the `mio` crate. You should probably call
-    /// `set_edge()` before using this.
+    /// The async pin poller object can be used with the `mio` crate. You should
+    /// probably call `set_edge()` before using this.
     ///
-    /// This method is only available when the `mio-evented` crate feature is enabled.
+    /// This method is only available when the `mio-evented` crate feature is
+    /// enabled.
     #[cfg(feature = "mio-evented")]
     pub fn get_async_poller(&self) -> Result<AsyncPinPoller> {
         AsyncPinPoller::new(self.pin_num)
@@ -471,10 +462,11 @@ impl Pin {
 
     /// Get a Stream of pin interrupts for this pin
     ///
-    /// The PinStream object can be used with the `tokio` crate. You should probably call
-    /// `set_edge()` before using this.
+    /// The PinStream object can be used with the `tokio` crate. You should
+    /// probably call `set_edge()` before using this.
     ///
-    /// This method is only available when the `async-tokio` crate feature is enabled.
+    /// This method is only available when the `async-tokio` crate feature is
+    /// enabled.
     #[cfg(feature = "async-tokio")]
     pub fn get_stream(&self) -> Result<PinStream> {
         PinStream::init(*self)
@@ -482,15 +474,17 @@ impl Pin {
 
     /// Get a Stream of pin values for this pin
     ///
-    /// The PinStream object can be used with the `tokio` crate. You should probably call
-    /// `set_edge(Edge::BothEdges)` before using this.
+    /// The PinStream object can be used with the `tokio` crate. You should
+    /// probably call `set_edge(Edge::BothEdges)` before using this.
     ///
-    /// Note that the values produced are the value of the pin as soon as we get to handling the
-    /// interrupt in userspace.  Each time this stream produces a value, a change has occurred, but
-    /// it could end up producing the same value multiple times if the value has changed back
+    /// Note that the values produced are the value of the pin as soon as we get
+    /// to handling the interrupt in userspace.  Each time this stream
+    /// produces a value, a change has occurred, but it could end up
+    /// producing the same value multiple times if the value has changed back
     /// between when the interrupt occurred and when the value was read.
     ///
-    /// This method is only available when the `async-tokio` crate feature is enabled.
+    /// This method is only available when the `async-tokio` crate feature is
+    /// enabled.
     #[cfg(feature = "async-tokio")]
     pub fn get_value_stream(&self) -> Result<PinValueStream> {
         Ok(PinValueStream(PinStream::init(*self)?))

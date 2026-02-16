@@ -9,6 +9,7 @@
 use std::env;
 use std::thread::sleep;
 use std::time::Duration;
+
 use sysfs_gpio::{Direction, Pin};
 
 struct Arguments {
