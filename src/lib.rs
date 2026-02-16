@@ -515,6 +515,7 @@ fn extract_pin_fom_path_test() {
 pub struct PinPoller {
     pin_num: u64,
     epoll_fd: RawFd,
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     devfile: File,
 }
 #[cfg(not(target_os = "wasi"))]
