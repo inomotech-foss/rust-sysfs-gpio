@@ -56,8 +56,8 @@ use std::fs::File;
 use std::io::prelude::*;
 #[cfg(any(target_os = "linux", target_os = "android", feature = "async-tokio"))]
 use std::io::SeekFrom;
-#[cfg(not(target_os = "wasi"))]
-use std::os::unix::prelude::*;
+#[cfg(any(feature = "async-tokio", feature = "mio-evented"))]
+use std::os::fd::{AsRawFd, RawFd};
 use std::path::Path;
 #[cfg(feature = "async-tokio")]
 use std::task::Poll;
@@ -71,9 +71,7 @@ use mio::event::Source;
 #[cfg(feature = "mio-evented")]
 use mio::unix::SourceFd;
 #[cfg(any(target_os = "linux", target_os = "android"))]
-use nix::sys::epoll::*;
-#[cfg(not(target_os = "wasi"))]
-use nix::unistd::close;
+use nix::sys::epoll::{Epoll, EpollCreateFlags, EpollEvent, EpollFlags, EpollTimeout};
 #[cfg(feature = "async-tokio")]
 use tokio::io::unix::AsyncFd;
 
@@ -508,7 +506,8 @@ fn extract_pin_fom_path_test() {
 #[derive(Debug)]
 pub struct PinPoller {
     pin_num: u64,
-    epoll_fd: RawFd,
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    epoll: Epoll,
     #[cfg(any(target_os = "linux", target_os = "android"))]
     devfile: File,
 }
@@ -526,20 +525,16 @@ impl PinPoller {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn new(pin_num: u64) -> Result<PinPoller> {
         let devfile: File = File::open(format!("/sys/class/gpio/gpio{}/value", pin_num))?;
-        let devfile_fd = devfile.as_raw_fd();
-        let epoll_fd = epoll_create()?;
-        let mut event = EpollEvent::new(EpollFlags::EPOLLPRI | EpollFlags::EPOLLET, 0u64);
+        let epoll = Epoll::new(EpollCreateFlags::empty())?;
+        let event = EpollEvent::new(EpollFlags::EPOLLPRI | EpollFlags::EPOLLET, 0u64);
 
-        match epoll_ctl(epoll_fd, EpollOp::EpollCtlAdd, devfile_fd, &mut event) {
+        match epoll.add(&devfile, event) {
             Ok(_) => Ok(PinPoller {
                 pin_num,
                 devfile,
-                epoll_fd,
+                epoll,
             }),
-            Err(err) => {
-                let _ = close(epoll_fd); // cleanup
-                Err(::std::convert::From::from(err))
-            }
+            Err(err) => Err(::std::convert::From::from(err)),
         }
     }
 
@@ -570,7 +565,13 @@ impl PinPoller {
         flush_input_from_file(&mut self.devfile, 255)?;
         let dummy_event = EpollEvent::new(EpollFlags::EPOLLPRI | EpollFlags::EPOLLET, 0u64);
         let mut events: [EpollEvent; 1] = [dummy_event];
-        let cnt = epoll_wait(self.epoll_fd, &mut events, timeout_ms)?;
+        // LOGIC: Previous versions essentially passed `timeout_ms as c_int` to the
+        //        kernel without validation. We now validate that the value is in range
+        //        -1..=i32::MAX. A future major version of this library should update
+        //        the `poll` signature.
+        let timeout = EpollTimeout::try_from(timeout_ms as i128)
+            .map_err(|err| Error::Io(io::Error::other(err)))?;
+        let cnt = self.epoll.wait(&mut events, timeout)?;
         Ok(match cnt {
             0 => None, // timeout
             _ => Some(get_value_from_file(&mut self.devfile)?),
@@ -580,16 +581,6 @@ impl PinPoller {
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     pub fn poll(&mut self, _timeout_ms: isize) -> Result<Option<u8>> {
         Err(Error::Unsupported("PinPoller".into()))
-    }
-}
-
-#[cfg(not(target_os = "wasi"))]
-impl Drop for PinPoller {
-    fn drop(&mut self) {
-        // we implement drop to close the underlying epoll fd as
-        // it does not implement drop itself.  This is similar to
-        // how mio works
-        close(self.epoll_fd).unwrap(); // panic! if close files
     }
 }
 
